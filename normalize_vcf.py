@@ -12,15 +12,30 @@ def normalize_vcf(input_vcf, output_vcf):
                     chrom, pos, id_, ref, alt, qual, info, filter_ = fields[:8]
                     
                     for a, alt_allele in enumerate(alt.split(',')):
+                        depth = 0
                         if input_vcf == "bcfcalls.vcf":
-                            new_line = '\t'.join([chrom, pos, id_, ref, alt_allele, "AD="+fields[7].split(';')[0].split('=')[-1]]) + '\n'
-                        elif input_vcf == "longshotcalls.vcf" or input_vcf == "nanocaller.vcf" or  input_vcf == "deepvariant.vcf" or input_vcf == "clair.vcf":
-                            new_line = '\t'.join([chrom, pos, id_, ref, alt_allele, "AD="+fields[9].split(':')[3].split(',')[a+1]]) + '\n'
+                            depth=fields[7].split(';')[0].split('=')[-1]
+                            depth="*"
+                        elif input_vcf == "longshotcalls.vcf" or  input_vcf == "deepvariant.vcf" or input_vcf == "clair.vcf":
+                            depth = fields[9].split(':')[3].split(',')[a+1]
+                        elif input_vcf == "nanocaller.vcf" :
+                            if len(fields[9].split(':')) > 3 :
+                                depth = fields[9].split(':')[3].split(',')[a+1]
+                            else:
+                                depth='0'
                         elif 'metacaller' in input_vcf:
-                            new_line = '\t'.join([chrom, pos, id_, ref, alt_allele, "AD="+info.lstrip("DP=").split(',')[a]]) + '\n'
+                            depth = info.lstrip("DP=").split(',')[a]
                         else:
                             print("ERROR: which caller is that?")
-                        outfile.write(new_line)
+                            sys.exit(1)
+
+                        if len(ref) > len(alt_allele) and alt_allele==ref[:len(alt_allele)]: #this is a way to represent deletions, normalize that
+                            for i in range(len(alt_allele), len(ref)) :
+                                new_line = '\t'.join([chrom, str(int(pos)+i), id_, ref[i], ".", "AD="+depth]) + '\n'
+                                outfile.write(new_line)
+                        else:
+                            new_line = '\t'.join([chrom, pos, id_, ref, alt_allele, "AD="+depth]) + '\n'
+                            outfile.write(new_line)
 
 
 def main():

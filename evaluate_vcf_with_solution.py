@@ -14,7 +14,7 @@ import pysam
 import glob
 import matplotlib.pyplot as plt
 import scipy.stats as stats
-
+import re
 
 
 def reverse_complement(seq):
@@ -196,79 +196,6 @@ def output_all_potential_kmers_represented_by_the_VCF(vcffile, reffile, outfile,
     fo.close()
     return nb_variants_we_cannot_output
 
-def map_the_potential_kmers_to_the_reference(potential_file, solution, mapped_file, tmp_dir):
-
-    command = "bwa index " + solution + " -p " + tmp_dir+"/bwaidx"
-    res_idx = os.system(command)
-    if res_idx != 0:
-        print("index failed, ", command)
-        sys.exit(1)
-    print("ref indexed !")
-
-    command = "bwa fastmap " + tmp_dir + "/bwaidx " + potential_file + " > " + mapped_file
-    res_fastmap = os.system(command)
-    if res_fastmap != 0:
-        print("fastmap failed, ", command)
-        sys.exit(1)
-    print("seqs aligned !")
-
-    #delete the index
-    os.system("rm " + tmp_dir + "/bwaidx*")
-
-def classify_the_variants(mapped_file, output_file):
-
-    variants_confirmed_or_not = {} #associates (contig, pos, ref, alt) to a int: 0 - not tested, 1 - not there, 2 - there
-    contig = ""
-    pos = 0
-    ref = ""
-    alt = ""
-    length_seq = 0
-    variant = ("", 0, "", "")
-    untested_variant = False
-    with open(mapped_file) as f :
-        for line in f:
-
-            ls = line.split()
-            if len(ls) == 0 :
-                continue
-            if ls[0] == "SQ":
-                lsls = ls[1].split("$")
-                contig = lsls[0]
-                pos = int(lsls[1])
-                ref = lsls[2]
-                alt = lsls[3]
-                variant = (contig, pos, ref, alt)
-                if lsls[4] == "-1":
-                    untested_variant = True
-                    variants_confirmed_or_not[variant] = 0
-                elif variant not in variants_confirmed_or_not :
-                    variants_confirmed_or_not[variant] = 1
-                length_seq = int(ls[2].strip())
-
-            elif ls[0] == "EM":
-                if int(ls[2]) == length_seq and untested_variant == False:
-                    
-                    variants_confirmed_or_not[variant] = 2
-
-                untested_variant = False
-
-    nb_good = 0
-    nb_bad = 0
-    fo = open(output_file, "w")
-    for variant in variants_confirmed_or_not.keys():
-        print(variant, " : ", variants_confirmed_or_not[variant])
-        if variants_confirmed_or_not[variant] == 2 :
-            nb_good += 1
-            fo.write(variant[0] + "\t" + str(variant[1]) + "\t" + variant[2] + "\t" + variant[3] + "\tCONFIRMED\n")
-        elif variants_confirmed_or_not[variant] == 1 :
-            nb_bad += 1
-            fo.write(variant[0] + "\t" + str(variant[1]) + "\t" + variant[2] + "\t" + variant[3] + "\tNOT CONFIRMED\n")
-        elif variants_confirmed_or_not[variant] == 0 :
-            fo.write(variant[0] + "\t" + str(variant[1]) + "\t" + variant[2] + "\t" + variant[3] + "\tNOT TESTED\n")
-
-    fo.close()
-
-    print("In total, ", nb_good, " variants there and ", nb_bad, " not there")
 
 def generate_solution_calls_with_minipileup(solution_genomes, ref_file, tmp_dir, solution_calls_few_snps, solution_calls_many_snps):
 
@@ -483,202 +410,141 @@ def count_number_of_missing_variants(solution_calls_few_snps, solution_calls_man
 
     return stats_per_vcf
 
-
-def map_hifi_reads_on_the_kmers_to_check(kmers_to_check_fa, vcf_file, read_file, output_vcf, l):
-
-    # Inventory variants in a dictionary
-    variant_dict = {}  # Keys: (chrom, pos, ref), Values: {alt_allele: count}
-    with open(vcf_file) as f:
-        for line in f:
-            if line.startswith("#"):
-                continue
-            ls = line.strip().split()
-            chrom = ls[0]
-            pos = int(ls[1])
-            ref = ls[3]
-            alt_alleles = ls[4]
-            for alt in alt_alleles:
-                key = (chrom, pos, ref)
-                if key not in variant_dict:
-                    variant_dict[key] = {}
-                    variant_dict[key][ref] = 0
-                variant_dict[key][alt] = 0
-
-    # Create another variant_dict for non-uniquely mapped reads
-    ambiguous_variant_dict = deepcopy(variant_dict)
-
-    # Index the k-mers using bwa
-    # command = f"bwa index {kmers_to_check_fa}"
-    # res_idx = os.system(command)
-    # if res_idx != 0:
-    #     print("Indexing k-mers failed:", command)
-    #     sys.exit(1)
-    # print("K-mers indexed!")
-
-    # Map the reads to the k-mers using bwa fastmap
-    mapped_reads_file = "reads_on_kmers_to_check.txt"
-    # command = f"bwa fastmap {kmers_to_check_fa} {read_file} -l {2*l+1} | grep -B 1 --no-group-separator ^EM > {mapped_reads_file}"
-    # res_map = os.system(command)
-    # if res_map != 0:
-    #     print("Mapping reads failed:", command)
-    #     sys.exit(1)
-    # print("Reads mapped to k-mers!")
-
-    # Parse the mapped reads file and update variant_dict with counts
-    with open(mapped_reads_file) as f:
-        for line in f:
-            #EM	11923	11955	1	CP075492.1_3$276$T$C$0:-1: that's the kind of output we have
-            if line.startswith("EM") : 
-                fields = line.strip().split(":")[0].split("\t")
-                # print(fields)
-                if fields[4] =="*":
-                    continue
-                kmer_info = fields[4].split("$")
-                chrom = kmer_info[0]
-                pos = int(kmer_info[1])
-                ref = kmer_info[2]
-                alt = kmer_info[3]
-                if alt == "REF":
-                    alt = ref
-
-                key = (chrom, pos, ref)
-                if key in variant_dict and alt in variant_dict[key]:
-                    if int(fields[3]) == 1 :
-                        variant_dict[key][alt] += 1
-                    else:
-                        ambiguous_variant_dict[key][alt] += 1
-
-                # Increment and display line counter occasionally
-                if 'line_counter' not in locals():
-                    line_counter = 0
-                line_counter += 1
-                if line_counter % 1000 == 0:
-                    print(f"Processed {line_counter} lines...", end="\r")
-    
-    print("finished countging; ")
-
-    # Write the updated VCF with counts
-    with open(output_vcf, "w") as fo:
-        with open(vcf_file) as f:
-            for line in f:
-                if line.startswith("#"):  # Write header lines as is
-                    fo.write(line)
-                    continue
-                ls = line.strip().split("\t")
-                chrom = ls[0]
-                pos = int(ls[1])
-                ref = ls[3]
-                alt = ls[4]
-                key = (chrom, pos, ref)
-                ref_count = 0
-                alt_count = 0
-                alt_ref_count=0
-                alt_alt_count=0
-                if key in variant_dict :
-                    if ref in variant_dict[key]:
-                        ref_count = variant_dict[key][ref]
-                    if alt in variant_dict[key]:
-                        alt_count = variant_dict[key][alt]
-                    alt_ref_count = ambiguous_variant_dict[key][ref] if ref in ambiguous_variant_dict[key] else 0
-                    alt_alt_count = ambiguous_variant_dict[key][alt] if alt in ambiguous_variant_dict[key] else 0
-                fo.write("\t".join(ls) + f"\tCOUNTS:{ref_count},{alt_count}\tACOUNTS:{alt_ref_count},{alt_alt_count}\n")
-
-def stats_on_variants(vcf_file_with_counts):
-
-    all_variant_callers = ["bcfcalls_normalized.vcf","clair_normalized.vcf","longshotcalls_normalized.vcf","nanocaller_normalized.vcf","snpsnoop_normalized.vcf"]
-    good_bad_unsure_missed_variants = {i:[0,0,0,0] for i in all_variant_callers}
-    this_assembler_in_another_variant= {i:-1 for i in all_variant_callers}
-
-    with open(vcf_file_with_counts) as f:
-
-        for line in f :
-            if line[0] == "#":
-                continue
-
-            ls = line.strip().split("\t")
-            chrom = ls[0]
-            position = int(ls[1])
-            ref = ls[3]
-            callers = ls[7].split(',')
-            counts_sure = [int(i) for i in ls[8].lstrip("COUNTS:").split(',')]
-            counts_unsure = [int(i) for i in ls[9].lstrip("ACOUNTS:").split(',')]
-            
-            variant = "good"
-            if counts_sure[1] == 0 and counts_unsure[1] == 0 :
-                variant = "bad"
-            elif counts_sure[1] == 0 and counts_unsure[1] > 0:
-                variant = "unsure"
-
-            if variant == "bad" and "snpsnoop_normalized.vcf" in callers and counts_sure[0]+counts_sure[1]+counts_unsure[0]+counts_unsure[1] > 10 and chrom=="contig_10":
-                print(f"Bad in snpsnoop: {chrom}, {position}, {ref}, ", line)
-
-            for caller in all_variant_callers:
-                if caller in callers:
-                    if variant == "good":
-                        good_bad_unsure_missed_variants[caller][0] += 1
-                    elif variant == "unsure":
-                        good_bad_unsure_missed_variants[caller][3] += 1
-                    elif variant == "bad":
-                        good_bad_unsure_missed_variants[caller][1] += 1
-                    this_assembler_in_another_variant[caller] = position - 1 + len(ref)
-                elif position > this_assembler_in_another_variant[caller] :
-                    if variant == "good":
-                        good_bad_unsure_missed_variants[caller][2] += 1 #missed variant
-                    elif variant == "unsure":
-                        good_bad_unsure_missed_variants[caller][3] += 1
-    
-    for caller in all_variant_callers:
-        print(f"Variant caller: {caller}")
-        print(f"Good variants: {good_bad_unsure_missed_variants[caller][0]}")
-        print(f"Bad variants: {good_bad_unsure_missed_variants[caller][1]}")
-        print(f"Missed variants: {good_bad_unsure_missed_variants[caller][2]}")
-        print(f"Unsure variants: {good_bad_unsure_missed_variants[caller][3]}")
-        print("-" * 40)
-
 #input: vcf file containing all variants, bam file of hifi mapped on ref
 def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=None, solution_known = False):
 
     set_of_contig = {
-        "contig_10182",
-        "contig_10184",
-        "contig_10482",
-        "contig_12844",
-        "contig_3090",
-        "contig_5557",
-        "contig_5905",
-        "contig_8159",
-        "contig_8582",
-        "contig_8727"
+        "contig_10",
     }
-    set_of_contig={}
+    set_of_contig={} #to select all contigs
     tmp_dir = "tmp"
+
 
     # # Index all positions (contig_name, position) from the input VCF
     # variants = {}
     # number_of_non_indexed_variants = 0
+    # number_of_deletion_in_a_row = 0 #to avoid looking at deletions more that 5bp long
+    # last_pos=-2
+    # buffer_deletion = []
     # with open(all_variants) as vcf_file:
     #     for line in vcf_file:
     #         if line.startswith("#"):
     #             continue
-    #         fields = line.strip().split("\t")
+    #         fields = re.split(r'\t+', line.strip())
     #         contig_name = fields[0]
     #         if len(set_of_contig) > 0 and contig_name not in set_of_contig:
     #             continue
-    #         if len(fields[3]) != len(fields[4]) or ',' in fields[4]: #insertion/deletion, we'll look at that later
+    #         if len(fields[4]) -len(fields[3]) > 4 or len(fields[3]) - len(fields[4]) > 0 or ',' in fields[4]: #dont look at long insertions or complex deletions
+    #             number_of_non_indexed_variants += 1
+    #             continue
+    #         fields[4] = fields[4].replace('.', '*') the input VCF
+    # variants = {}
+    # number_of_non_indexed_variants = 0
+    # number_of_deletion_in_a_row = 0 #to avoid looking at deletions more that 5bp long
+    # last_pos=-2
+    # buffer_deletion = []
+    # with open(all_variants) as vcf_file:
+    #     for line in vcf_file:
+    #         if line.startswith("#"):
+    #             continue
+    #         fields = re.split(r'\t+', line.strip())
+    #         contig_name = fields[0]
+    #         if len(set_of_contig) > 0 and contig_name not in set_of_contig:
+    #             continue
+    #         if len(fields[4]) -len(fields[3]) > 4 or len(fields[3]) - len(fields[4]) > 0 or ',' in fields[4]: #dont look at long insertions or complex deletions
     #             number_of_non_indexed_variants += 1
     #             continue
     #         fields[4] = fields[4].replace('.', '*')
-    #         callers = fields[-2].split(',')
-    #         depths = [int(i) if i != '*' else 0 for i in fields[-1].split(',')]
+    #         callers = fields[6].split(',')
+    #         depths = [int(i) if i != '*' else 0 for i in fields[7].split(',')]
+    #         depth=1
+    #         if len(fields) > 8: #this correspond to vcf files where we added the last field, which is total_nanopore_coverage_at_this_position
+    #             depth = int(fields[8])
+    #         else:
+    #             depth=1
     #         position = int(fields[1]) - 1  # Convert 1-based to 0-based
-    #         for i in range(len(fields[3])) :
-    #             if fields[3][i] == fields[4][i]:
+
+    #         if fields[4] == "*": 
+    #             if number_of_deletion_in_a_row > 4 and last_pos > position - 4: #dont index long indels, there is an ambigutity whereas they should be mapped or not
+    #                 buffer_deletion = []
     #                 continue
-    #             if (contig_name, position+i) not in variants :
-    #                 variants[(contig_name, position+i)] = {}
-    #                 variants[(contig_name, position+i)][("ref",0)] = fields[3][i]
-    #             for c, caller in enumerate(callers) :
-    #                 variants[(contig_name, position+i)][(caller, depths[c])] = fields[4][i]
+    #             elif last_pos < position - 4:
+    #                 last_pos=position
+    #                 number_of_deletion_in_a_row = 0
+    #                 for deletion in buffer_deletion:
+    #                     variants[deletion[:2]] = {}
+    #                     variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+    #                     for c, caller in enumerate(deletion[4]):
+    #                         variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+    #                 continue
+    #             elif number_of_deletion_in_a_row < 4:
+    #                 last_pos = position
+    #                 number_of_deletion_in_a_row += 1
+    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+    #                 continue
+    #         elif len(buffer_deletion) > 0:
+    #             number_of_deletion_in_a_row = 0
+    #             for deletion in buffer_deletion:
+    #                 variants[deletion[:2]] = {}
+    #                 variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+    #                 for c, caller in enumerate(deletion[4]):
+    #                     variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+    #             buffer_deletion = []
+
+    #         if (contig_name, position) not in variants :
+    #             variants[(contig_name, position)] = {}
+    #             variants[(contig_name, position)][("ref",depth)] = fields[3]
+    #         for c, caller in enumerate(callers) :
+    #             variants[(contig_name, position)][(caller, depths[c])] = fields[4]
+    # print(f"Indexed {len(variants)} positions from the input VCF. Not indexed ", number_of_non_indexed_variants)
+
+    # variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
+    # with open(variants_pickle_file, "wb") as pkl_out:
+    #     pickle.dump(variants, pkl_out)
+    # print(f"Variants saved to {variants_pickle_file}")
+    #         callers = fields[6].split(',')
+    #         depths = [int(i) if i != '*' else 0 for i in fields[7].split(',')]
+    #         depth=1
+    #         if len(fields) > 8: #this correspond to vcf files where we added the last field, which is total_nanopore_coverage_at_this_position
+    #             depth = int(fields[8])
+    #         else:
+    #             depth=1
+    #         position = int(fields[1]) - 1  # Convert 1-based to 0-based
+
+    #         if fields[4] == "*": 
+    #             if number_of_deletion_in_a_row > 4 and last_pos > position - 4: #dont index long indels, there is an ambigutity whereas they should be mapped or not
+    #                 buffer_deletion = []
+    #                 continue
+    #             elif last_pos < position - 4:
+    #                 last_pos=position
+    #                 number_of_deletion_in_a_row = 0
+    #                 for deletion in buffer_deletion:
+    #                     variants[deletion[:2]] = {}
+    #                     variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+    #                     for c, caller in enumerate(deletion[4]):
+    #                         variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+    #                 continue
+    #             elif number_of_deletion_in_a_row < 4:
+    #                 last_pos = position
+    #                 number_of_deletion_in_a_row += 1
+    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+    #                 continue
+    #         elif len(buffer_deletion) > 0:
+    #             number_of_deletion_in_a_row = 0
+    #             for deletion in buffer_deletion:
+    #                 variants[deletion[:2]] = {}
+    #                 variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+    #                 for c, caller in enumerate(deletion[4]):
+    #                     variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+    #             buffer_deletion = []
+
+    #         if (contig_name, position) not in variants :
+    #             variants[(contig_name, position)] = {}
+    #             variants[(contig_name, position)][("ref",depth)] = fields[3]
+    #         for c, caller in enumerate(callers) :
+    #             variants[(contig_name, position)][(caller, depths[c])] = fields[4]
     # print(f"Indexed {len(variants)} positions from the input VCF. Not indexed ", number_of_non_indexed_variants)
 
     # variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
@@ -696,7 +562,7 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
 
     #     # Step 1: Generate the pileup for all variant positions
     #     pileup_file = os.path.join(tmp_dir, "variants.pileup")
-    #     command = f"samtools mpileup -B -A -l {bed_file_path} {mapped_hifi} > {pileup_file}"
+    #     command = f"samtools mpileup --no-output-ins -B -A -l {bed_file_path} {mapped_hifi} > {pileup_file}"
     #     res = os.system(command)
     #     if res != 0:
     #         print("Pileup generation failed:", command)
@@ -704,7 +570,7 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
     #     print("Pileup generation completed.")
     # else:
     #     pileup_file = os.path.join(tmp_dir, "variants.pileup")
-    #     command = f"samtools mpileup {mapped_hifi} > {pileup_file}"
+    #     command = f"samtools mpileup --no-output-ins {mapped_hifi} > {pileup_file}"
     #     res = os.system(command)
     #     if res != 0:
     #         print("Pileup generation failed:", command)
@@ -719,11 +585,11 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
     #         if len(fields) >= 5:
     #             contig, pos = fields[0], int(fields[1]) - 1  # Convert 1-based to 0-based
     #             bases = fields[4]
-    #             counts = {base: bases.upper().count(base) for base in "ATCG*"}
+    #             counts = {base: bases.upper().count(base) for base in "ATCG*+"}
     #             base_counts[(contig, pos)] = counts
     #         else:
     #             contig, pos = fields[0], int(fields[1]) - 1
-    #             base_counts[(contig, pos)] = {"A": 0, "T": 0, "C": 0, "G": 0, "*": 0}
+    #             base_counts[(contig, pos)] = {"A": 0, "T": 0, "C": 0, "G": 0, "*": 0, "+":0}
     # print("Base counting completed.")
 
     # # Save base_counts and variants to pickle files to avoid recalculating
@@ -758,39 +624,42 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
     hist_metacaller_not_deepvariant = list()
     hist_deepvariant_not_metacaller = list()
     hist_all_variants = list()
+    depth_per_contig = {}
+    loci_per_contig = {}
 
     # Per-contig statistics
     contig_stats = {}
 
     for variant_key, variant_info in variants.items():
+
         contig, pos = variant_key
         if variant_key not in base_counts:
             # print("variant ker ", variant_key, variant_info)
             continue
 
-        # # Skip this variant if all callers have allele count too low => to test what kind of snps are detected by what kind of callers
-        # allele_counts = []
-        # for caller_and_depth, alt_base in variant_info.items():
-        #     if caller_and_depth[0] == "ref":
-        #         continue
-        #     if alt_base == "*" or alt_base == "N":
-        #         continue
-        #     allele_counts.append(caller_and_depth[1])
-        # if allele_counts and all(ac <= 5 for ac in allele_counts):
+        ref_base = "B"
+        depth_total = 1
+        for (c, d), base in variant_info.items():
+            if c == "ref":
+                depth_total = d
+                if contig not in depth_per_contig:
+                    depth_per_contig[contig] = 0
+                    loci_per_contig[contig] = 0
+                depth_per_contig[contig]+= depth_total
+                loci_per_contig[contig] += 1
+                ref_base = base
+                break
+        # if depth_total < 20 :
         #     continue
-
-        ref_base = variant_info[("ref", 0)]
         found_variant = False
         for caller_and_depth, alt_base in variant_info.items():
             caller, depth = caller_and_depth
-            if caller == "ref":
+            if caller == "ref" :
                 continue
-            if variant_info[caller_and_depth] == "*":
-                continue
-            if alt_base == "*" or caller not in caller_stats:
+            # if variant_info[caller_and_depth] == "*": #if we don't want to count, indels, uncomment that
+            #     continue
+            if caller not in caller_stats:
                 caller_stats[caller] = {"recall": 0, "false_positives": 0, "total": 0}
-            if alt_base == "N":
-                continue
             caller_stats[caller]["total"] += 1
 
             # Initialize per-contig stats for this caller
@@ -804,24 +673,22 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
 
             # Check if the base is seen in the pileup
             if variant_key in base_counts:
-                
+
                 counts = base_counts[variant_key]
-                depth_total = sum(counts.values())
-                if counts[alt_base] > 0:
+                if (alt_base in counts and counts[alt_base] > 0) or (len(alt_base) > len(ref_base) and counts["+"] > 0):
                     caller_stats[caller]["recall"] += 1
                     contig_stats[contig][caller]["recall"] += 1
                     found_variant = True 
-                    if variant_key not in true_variant_called:
-                        true_variant_called.add(variant_key)
+                    if (variant_key, alt_base) not in true_variant_called:
+                        true_variant_called.add((variant_key, alt_base))
                         total_number_of_true_variants += 1
                         total_number_of_true_variants_per_contig[contig] += 1
-                        if caller == "bcfcalls_normalized.vcf":
+                        if caller == "metacaller_normalized.vcf":
                             if contig not in alt_per_contig:
                                 tot_per_contig[contig] = 0
                                 alt_per_contig[contig] = 0
                             alt_per_contig[contig] += depth
                             tot_per_contig[contig] += 1
-
 
                     if caller == "metacaller_normalized.vcf" :
                         hist_all_variants.append(float(depth)/depth_total)
@@ -829,11 +696,11 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
                         hist_metacaller_not_deepvariant.append(float(depth)/depth_total)
                     elif caller == "deepvariant_normalized.vcf" and "metacaller_normalized.vcf" not in [i[0] for i in variant_info.keys()]:
                         hist_deepvariant_not_metacaller.append(float(depth)/depth_total)
-                        if "contig_10" in variant_key[0]:  
-                            print("deepvariant not metacaller: ", variant_key, " ", variant_info, " ", float(depth)/depth_total, " ", depth_total)
+                        
+                        # print("deepvariant not metacaller: ", variant_key, " ", variant_info, " ", float(depth)/depth_total, " ", depth_total)
 
                         
-                elif counts[alt_base] == 0:
+                else:
                     caller_stats[caller]["false_positives"] += 1
                     contig_stats[contig][caller]["false_positives"] += 1
        
@@ -892,6 +759,7 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
 
     # Aggregate statistics across all callers and contigs
     print("\nAggregated statistics across all callers (sum over contigs):")
+    points_coverage_recall = {}
     for caller in caller_stats:
         total_recall = 0
         total_fp = 0
@@ -904,10 +772,13 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
                     or "metacaller_normalized.vcf" not in contig_stats[contig] or contig_stats[contig]["metacaller_normalized.vcf"]["recall"] == 0 \
                     or "bcfcalls_normalized.vcf" not in contig_stats[contig] or contig_stats[contig]["bcfcalls_normalized.vcf"]["recall"] == 0:
                     continue
-                total_recall += contig_stats[contig][caller]["recall"]
-                total_fp += contig_stats[contig][caller]["false_positives"]
-                total_called += contig_stats[contig][caller]["total"]
-                total_true_pos += total_number_of_true_variants_per_contig[contig]
+            
+                # if depth_per_contig[contig]/loci_per_contig[contig] < 40:
+                if alt_per_contig[contig]/tot_per_contig[contig] <10:
+                    total_recall += contig_stats[contig][caller]["recall"]
+                    total_fp += contig_stats[contig][caller]["false_positives"]
+                    total_called += contig_stats[contig][caller]["total"]
+                    total_true_pos += total_number_of_true_variants_per_contig[contig]
         recall_rate = total_recall / total_true_pos if total_true_pos > 0 else 0
         fp_rate = total_fp / total_called if total_called > 0 else 0
         print(f"Caller: {caller}")
@@ -933,7 +804,7 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
                     continue
                 meta_recall = contig_stats[contig].get(metacaller_key, {}).get("recall", 0) / total_number_of_true_variants_per_contig[contig]
                 deep_recall = contig_stats[contig].get(deepvariant_key, {}).get("recall", 0) / total_number_of_true_variants_per_contig[contig]
-                cov = min(20, alt_per_contig.get(contig, 0) / tot_per_contig.get(contig, 1))
+                cov = min(40, depth_per_contig[contig]/loci_per_contig[contig])
                 coverages.append(cov)
                 number_of_variants.append(total_number_of_true_variants_per_contig[contig])
                 metacaller_recalls.append(meta_recall)
@@ -972,7 +843,7 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
         plt.xlim(0, 1)
         plt.ylim(0, 1)
         plt.grid(True)
-        plt.colorbar(scatter, label="Coverage (alt/true variants)")
+        plt.colorbar(scatter, label="Coverage")
         plt.tight_layout()
         plt.show()
 
@@ -1157,12 +1028,6 @@ if __name__ == "__main__":
 
 
     if reference_genome_available :
-         # nb_of_variants_we_cannot_output = output_all_potential_kmers_represented_by_the_VCF(args.vcf, args.ref, "kmers_to_check.fa", args.length)
-          # print("Outputted all variants as k-mers")
-
-        # map_the_potential_kmers_to_the_reference(os.path.join(tmp_dir, "kmers_to_check.fa"), args.solution, os.path.join(tmp_dir, "mapped.txt"), tmp_dir)
-        # classify_the_variants(os.path.join(tmp_dir, "mapped.txt"), args.output)
-        # print("Did not test ", nb_of_variants_we_cannot_output, " variants because there were too many variants around")
 
         #create the solution calls for two categories of snps: the one that should be called and the one that can be called
         solution_calls_few = os.path.join(tmp_dir, "solution_few.vcf")
@@ -1179,40 +1044,7 @@ if __name__ == "__main__":
 
         mapped_reads_bam = args.mapped_reads
 
-        # # Index the BAM file
-        # command = f"samtools index {mapped_reads_bam}"
-        # res = os.system(command)
-        # if res != 0:
-        #     print("Indexing BAM file failed:", command)
-        #     sys.exit(1)
-
-        # print("HiFi reads successfully mapped and indexed.")
-
-        # map_hifi_reads_on_the_kmers_to_check(
-        #     kmers_to_check_fa="kmers_to_check.fa",
-        #     vcf_file=args.vcf,
-        #     read_file=args.reads,  # Replace with the actual path to HiFi reads
-        #     output_vcf=args.output,
-        #     l = args.length
-        # )
-        # print("mapped the reads")
-
-        # stats_on_variants(args.output)
-
-        # # Map HiFi reads to the reference genome using minimap2
-        # command = f"minimap2 -a -x map-hifi {args.ref} {args.reads} | samtools view -bS - | samtools sort -o {mapped_reads_bam}"
-        # print("Mapping HiFi reads to the reference genome:", command)
-        # res = os.system(command)
-        # if res != 0:
-        #     print("Mapping HiFi reads failed:", command)
-        #     sys.exit(1)
-
-
         compare_calls_with_HiFi(args.vcf, mapped_reads_bam, solution_known=False)
-        # Output all potential k-mers represented by the VCF
-        # output_all_potential_kmers_represented_by_the_VCF(args.vcf, args.ref, os.path.join(tmp_dir, "kmers_to_check.fa"), args.length)
-        # print("Outputted all variants as k-mers")
-
 
 
 
