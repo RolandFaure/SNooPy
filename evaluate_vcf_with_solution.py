@@ -420,185 +420,185 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, false_positive_SNPs_file=
     tmp_dir = "tmp"
 
 
-    # # Index all positions (contig_name, position) from the input VCF
-    # variants = {}
-    # number_of_non_indexed_variants = 0
-    # number_of_deletion_in_a_row = 0 #to avoid looking at deletions more that 5bp long
-    # last_pos=-2
-    # buffer_deletion = []
-    # with open(all_variants) as vcf_file:
-    #     for line in vcf_file:
-    #         if line.startswith("#"):
-    #             continue
-    #         fields = re.split(r'\t+', line.strip())
-    #         contig_name = fields[0]
-    #         if len(set_of_contig) > 0 and contig_name not in set_of_contig:
-    #             continue
-    #         if len(fields[4]) -len(fields[3]) > 4 or len(fields[3]) - len(fields[4]) > 0 or ',' in fields[4]: #dont look at long insertions or complex deletions
-    #             number_of_non_indexed_variants += 1
-    #             continue
-    #         fields[4] = fields[4].replace('.', '*') the input VCF
-    # variants = {}
-    # number_of_non_indexed_variants = 0
-    # number_of_deletion_in_a_row = 0 #to avoid looking at deletions more that 5bp long
-    # last_pos=-2
-    # buffer_deletion = []
-    # with open(all_variants) as vcf_file:
-    #     for line in vcf_file:
-    #         if line.startswith("#"):
-    #             continue
-    #         fields = re.split(r'\t+', line.strip())
-    #         contig_name = fields[0]
-    #         if len(set_of_contig) > 0 and contig_name not in set_of_contig:
-    #             continue
-    #         if len(fields[4]) -len(fields[3]) > 4 or len(fields[3]) - len(fields[4]) > 0 or ',' in fields[4]: #dont look at long insertions or complex deletions
-    #             number_of_non_indexed_variants += 1
-    #             continue
-    #         fields[4] = fields[4].replace('.', '*')
-    #         callers = fields[6].split(',')
-    #         depths = [int(i) if i != '*' else 0 for i in fields[7].split(',')]
-    #         depth=1
-    #         if len(fields) > 8: #this correspond to vcf files where we added the last field, which is total_nanopore_coverage_at_this_position
-    #             depth = int(fields[8])
-    #         else:
-    #             depth=1
-    #         position = int(fields[1]) - 1  # Convert 1-based to 0-based
+    # Index all positions (contig_name, position) from the input VCF
+    variants = {}
+    number_of_non_indexed_variants = 0
+    number_of_deletion_in_a_row = 0 #to avoid looking at deletions more that 5bp long
+    last_pos=-2
+    buffer_deletion = []
+    with open(all_variants) as vcf_file:
+        for line in vcf_file:
+            if line.startswith("#"):
+                continue
+            fields = re.split(r'\t+', line.strip())
+            contig_name = fields[0]
+            if len(set_of_contig) > 0 and contig_name not in set_of_contig:
+                continue
+            if len(fields[4]) -len(fields[3]) > 4 or len(fields[3]) - len(fields[4]) > 0 or ',' in fields[4]: #dont look at long insertions or complex deletions
+                number_of_non_indexed_variants += 1
+                continue
+            fields[4] = fields[4].replace('.', '*') the input VCF
+    variants = {}
+    number_of_non_indexed_variants = 0
+    number_of_deletion_in_a_row = 0 #to avoid looking at deletions more that 5bp long
+    last_pos=-2
+    buffer_deletion = []
+    with open(all_variants) as vcf_file:
+        for line in vcf_file:
+            if line.startswith("#"):
+                continue
+            fields = re.split(r'\t+', line.strip())
+            contig_name = fields[0]
+            if len(set_of_contig) > 0 and contig_name not in set_of_contig:
+                continue
+            if len(fields[4]) -len(fields[3]) > 4 or len(fields[3]) - len(fields[4]) > 0 or ',' in fields[4]: #dont look at long insertions or complex deletions
+                number_of_non_indexed_variants += 1
+                continue
+            fields[4] = fields[4].replace('.', '*')
+            callers = fields[6].split(',')
+            depths = [int(i) if i != '*' else 0 for i in fields[7].split(',')]
+            depth=1
+            if len(fields) > 8: #this correspond to vcf files where we added the last field, which is total_nanopore_coverage_at_this_position
+                depth = int(fields[8])
+            else:
+                depth=1
+            position = int(fields[1]) - 1  # Convert 1-based to 0-based
 
-    #         if fields[4] == "*": 
-    #             if number_of_deletion_in_a_row > 4 and last_pos > position - 4: #dont index long indels, there is an ambigutity whereas they should be mapped or not
-    #                 buffer_deletion = []
-    #                 continue
-    #             elif last_pos < position - 4:
-    #                 last_pos=position
-    #                 number_of_deletion_in_a_row = 0
-    #                 for deletion in buffer_deletion:
-    #                     variants[deletion[:2]] = {}
-    #                     variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
-    #                     for c, caller in enumerate(deletion[4]):
-    #                         variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
-    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
-    #                 continue
-    #             elif number_of_deletion_in_a_row < 4:
-    #                 last_pos = position
-    #                 number_of_deletion_in_a_row += 1
-    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
-    #                 continue
-    #         elif len(buffer_deletion) > 0:
-    #             number_of_deletion_in_a_row = 0
-    #             for deletion in buffer_deletion:
-    #                 variants[deletion[:2]] = {}
-    #                 variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
-    #                 for c, caller in enumerate(deletion[4]):
-    #                     variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
-    #             buffer_deletion = []
+            if fields[4] == "*": 
+                if number_of_deletion_in_a_row > 4 and last_pos > position - 4: #dont index long indels, there is an ambigutity whereas they should be mapped or not
+                    buffer_deletion = []
+                    continue
+                elif last_pos < position - 4:
+                    last_pos=position
+                    number_of_deletion_in_a_row = 0
+                    for deletion in buffer_deletion:
+                        variants[deletion[:2]] = {}
+                        variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+                        for c, caller in enumerate(deletion[4]):
+                            variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+                    buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+                    continue
+                elif number_of_deletion_in_a_row < 4:
+                    last_pos = position
+                    number_of_deletion_in_a_row += 1
+                    buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+                    continue
+            elif len(buffer_deletion) > 0:
+                number_of_deletion_in_a_row = 0
+                for deletion in buffer_deletion:
+                    variants[deletion[:2]] = {}
+                    variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+                    for c, caller in enumerate(deletion[4]):
+                        variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+                buffer_deletion = []
 
-    #         if (contig_name, position) not in variants :
-    #             variants[(contig_name, position)] = {}
-    #             variants[(contig_name, position)][("ref",depth)] = fields[3]
-    #         for c, caller in enumerate(callers) :
-    #             variants[(contig_name, position)][(caller, depths[c])] = fields[4]
-    # print(f"Indexed {len(variants)} positions from the input VCF. Not indexed ", number_of_non_indexed_variants)
+            if (contig_name, position) not in variants :
+                variants[(contig_name, position)] = {}
+                variants[(contig_name, position)][("ref",depth)] = fields[3]
+            for c, caller in enumerate(callers) :
+                variants[(contig_name, position)][(caller, depths[c])] = fields[4]
+    print(f"Indexed {len(variants)} positions from the input VCF. Not indexed ", number_of_non_indexed_variants)
 
-    # variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
-    # with open(variants_pickle_file, "wb") as pkl_out:
-    #     pickle.dump(variants, pkl_out)
-    # print(f"Variants saved to {variants_pickle_file}")
-    #         callers = fields[6].split(',')
-    #         depths = [int(i) if i != '*' else 0 for i in fields[7].split(',')]
-    #         depth=1
-    #         if len(fields) > 8: #this correspond to vcf files where we added the last field, which is total_nanopore_coverage_at_this_position
-    #             depth = int(fields[8])
-    #         else:
-    #             depth=1
-    #         position = int(fields[1]) - 1  # Convert 1-based to 0-based
+    variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
+    with open(variants_pickle_file, "wb") as pkl_out:
+        pickle.dump(variants, pkl_out)
+    print(f"Variants saved to {variants_pickle_file}")
+            callers = fields[6].split(',')
+            depths = [int(i) if i != '*' else 0 for i in fields[7].split(',')]
+            depth=1
+            if len(fields) > 8: #this correspond to vcf files where we added the last field, which is total_nanopore_coverage_at_this_position
+                depth = int(fields[8])
+            else:
+                depth=1
+            position = int(fields[1]) - 1  # Convert 1-based to 0-based
 
-    #         if fields[4] == "*": 
-    #             if number_of_deletion_in_a_row > 4 and last_pos > position - 4: #dont index long indels, there is an ambigutity whereas they should be mapped or not
-    #                 buffer_deletion = []
-    #                 continue
-    #             elif last_pos < position - 4:
-    #                 last_pos=position
-    #                 number_of_deletion_in_a_row = 0
-    #                 for deletion in buffer_deletion:
-    #                     variants[deletion[:2]] = {}
-    #                     variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
-    #                     for c, caller in enumerate(deletion[4]):
-    #                         variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
-    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
-    #                 continue
-    #             elif number_of_deletion_in_a_row < 4:
-    #                 last_pos = position
-    #                 number_of_deletion_in_a_row += 1
-    #                 buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
-    #                 continue
-    #         elif len(buffer_deletion) > 0:
-    #             number_of_deletion_in_a_row = 0
-    #             for deletion in buffer_deletion:
-    #                 variants[deletion[:2]] = {}
-    #                 variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
-    #                 for c, caller in enumerate(deletion[4]):
-    #                     variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
-    #             buffer_deletion = []
+            if fields[4] == "*": 
+                if number_of_deletion_in_a_row > 4 and last_pos > position - 4: #dont index long indels, there is an ambigutity whereas they should be mapped or not
+                    buffer_deletion = []
+                    continue
+                elif last_pos < position - 4:
+                    last_pos=position
+                    number_of_deletion_in_a_row = 0
+                    for deletion in buffer_deletion:
+                        variants[deletion[:2]] = {}
+                        variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+                        for c, caller in enumerate(deletion[4]):
+                            variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+                    buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+                    continue
+                elif number_of_deletion_in_a_row < 4:
+                    last_pos = position
+                    number_of_deletion_in_a_row += 1
+                    buffer_deletion.append((contig_name, position, fields[3], fields[4], callers, depths, depth))
+                    continue
+            elif len(buffer_deletion) > 0:
+                number_of_deletion_in_a_row = 0
+                for deletion in buffer_deletion:
+                    variants[deletion[:2]] = {}
+                    variants[deletion[:2]][("ref", deletion[6])] = deletion[2]
+                    for c, caller in enumerate(deletion[4]):
+                        variants[deletion[:2]][(caller, deletion[5][c])] = deletion[3]
+                buffer_deletion = []
 
-    #         if (contig_name, position) not in variants :
-    #             variants[(contig_name, position)] = {}
-    #             variants[(contig_name, position)][("ref",depth)] = fields[3]
-    #         for c, caller in enumerate(callers) :
-    #             variants[(contig_name, position)][(caller, depths[c])] = fields[4]
-    # print(f"Indexed {len(variants)} positions from the input VCF. Not indexed ", number_of_non_indexed_variants)
+            if (contig_name, position) not in variants :
+                variants[(contig_name, position)] = {}
+                variants[(contig_name, position)][("ref",depth)] = fields[3]
+            for c, caller in enumerate(callers) :
+                variants[(contig_name, position)][(caller, depths[c])] = fields[4]
+    print(f"Indexed {len(variants)} positions from the input VCF. Not indexed ", number_of_non_indexed_variants)
 
-    # variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
-    # with open(variants_pickle_file, "wb") as pkl_out:
-    #     pickle.dump(variants, pkl_out)
-    # print(f"Variants saved to {variants_pickle_file}")
+    variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
+    with open(variants_pickle_file, "wb") as pkl_out:
+        pickle.dump(variants, pkl_out)
+    print(f"Variants saved to {variants_pickle_file}")
 
-    # if not solution_known :
-    #     # Create a BED file describing all positions we need
-    #     bed_file_path = os.path.join(tmp_dir, "positions_to_check.bed")
-    #     with open(bed_file_path, "w") as bed_file:
-    #         for (contig, pos), variant_info in variants.items():
-    #             bed_file.write(f"{contig}\t{pos}\t{pos + 1}\n")
-    #     print(f"BED file created at {bed_file_path}")
+    if not solution_known :
+        # Create a BED file describing all positions we need
+        bed_file_path = os.path.join(tmp_dir, "positions_to_check.bed")
+        with open(bed_file_path, "w") as bed_file:
+            for (contig, pos), variant_info in variants.items():
+                bed_file.write(f"{contig}\t{pos}\t{pos + 1}\n")
+        print(f"BED file created at {bed_file_path}")
 
-    #     # Step 1: Generate the pileup for all variant positions
-    #     pileup_file = os.path.join(tmp_dir, "variants.pileup")
-    #     command = f"samtools mpileup --no-output-ins -B -A -l {bed_file_path} {mapped_hifi} > {pileup_file}"
-    #     res = os.system(command)
-    #     if res != 0:
-    #         print("Pileup generation failed:", command)
-    #         sys.exit(1)
-    #     print("Pileup generation completed.")
-    # else:
-    #     pileup_file = os.path.join(tmp_dir, "variants.pileup")
-    #     command = f"samtools mpileup --no-output-ins {mapped_hifi} > {pileup_file}"
-    #     res = os.system(command)
-    #     if res != 0:
-    #         print("Pileup generation failed:", command)
-    #         sys.exit(1)
-    #     print("Pileup generation completed.")
+        # Step 1: Generate the pileup for all variant positions
+        pileup_file = os.path.join(tmp_dir, "variants.pileup")
+        command = f"samtools mpileup --no-output-ins -B -A -l {bed_file_path} {mapped_hifi} > {pileup_file}"
+        res = os.system(command)
+        if res != 0:
+            print("Pileup generation failed:", command)
+            sys.exit(1)
+        print("Pileup generation completed.")
+    else:
+        pileup_file = os.path.join(tmp_dir, "variants.pileup")
+        command = f"samtools mpileup --no-output-ins {mapped_hifi} > {pileup_file}"
+        res = os.system(command)
+        if res != 0:
+            print("Pileup generation failed:", command)
+            sys.exit(1)
+        print("Pileup generation completed.")
 
-    # # Step 2: Parse the pileup and count base occurrences for each variant position
-    # base_counts = {}
-    # with open(pileup_file) as pileup_in:
-    #     for line in pileup_in:
-    #         fields = line.strip().split("\t")
-    #         if len(fields) >= 5:
-    #             contig, pos = fields[0], int(fields[1]) - 1  # Convert 1-based to 0-based
-    #             bases = fields[4]
-    #             counts = {base: bases.upper().count(base) for base in "ATCG*+"}
-    #             base_counts[(contig, pos)] = counts
-    #         else:
-    #             contig, pos = fields[0], int(fields[1]) - 1
-    #             base_counts[(contig, pos)] = {"A": 0, "T": 0, "C": 0, "G": 0, "*": 0, "+":0}
-    # print("Base counting completed.")
+    # Step 2: Parse the pileup and count base occurrences for each variant position
+    base_counts = {}
+    with open(pileup_file) as pileup_in:
+        for line in pileup_in:
+            fields = line.strip().split("\t")
+            if len(fields) >= 5:
+                contig, pos = fields[0], int(fields[1]) - 1  # Convert 1-based to 0-based
+                bases = fields[4]
+                counts = {base: bases.upper().count(base) for base in "ATCG*+"}
+                base_counts[(contig, pos)] = counts
+            else:
+                contig, pos = fields[0], int(fields[1]) - 1
+                base_counts[(contig, pos)] = {"A": 0, "T": 0, "C": 0, "G": 0, "*": 0, "+":0}
+    print("Base counting completed.")
 
-    # # Save base_counts and variants to pickle files to avoid recalculating
-    # base_counts_pickle_file = os.path.join(tmp_dir, "base_counts.pkl")
+    # Save base_counts and variants to pickle files to avoid recalculating
+    base_counts_pickle_file = os.path.join(tmp_dir, "base_counts.pkl")
 
-    # # # Save base_counts
-    # with open(base_counts_pickle_file, "wb") as pkl_out:
-    #     pickle.dump(base_counts, pkl_out)
-    # print(f"Base counts saved to {base_counts_pickle_file}")
+    # # Save base_counts
+    with open(base_counts_pickle_file, "wb") as pkl_out:
+        pickle.dump(base_counts, pkl_out)
+    print(f"Base counts saved to {base_counts_pickle_file}")
 
     base_counts_pickle_file = os.path.join(tmp_dir, "base_counts.pkl")
     variants_pickle_file = os.path.join(tmp_dir, "variants.pkl")
