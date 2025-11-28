@@ -1,17 +1,17 @@
-# metaCaller
+# SNooPy
 metagenomic SNP caller
 
 ## Installation
-metaCaller is a python file, which does not need compilation. You will need to have an environment with python3, scipy, numpy, pandas, pysam and sklearn installed. You can create such an environment in conda:
+SNooPy is a python file, which does not need compilation. You will need to have an environment with python3, scipy, numpy, pandas, pysam and sklearn installed. You can create such an environment in conda:
 ```
-conda create -n metacaller_env -y -c bioconda -c conda-forge numpy scipy scikit-learn pysam pandas
+conda create -n snoopy_env -y -c bioconda -c conda-forge numpy scipy scikit-learn pysam pandas
 ```
 
 ## Usage
 ```
-python metaCaller.py --help
+python snoopy.py --help
 
-usage: metaCaller.py [-h] -r REFERENCE -b BAM -o OUT [-t THREADS]
+usage: snoopy.py [-h] -r REFERENCE -b BAM -o OUT [-t THREADS]
                      [--window WINDOW] [--benchmark]
 
 optional arguments:
