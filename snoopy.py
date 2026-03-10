@@ -1,10 +1,10 @@
 """
-SNooPy
+SNooPy: Strain-level Nucleotide Polymorphism detection in metagenomic data
 Authors: Roland Faure, based on a previous program (strainminer) by Minh Tam Truong Khac
 """
 
 
-__version__ = '0.3.16'
+__version__ = '0.4.0'
 import pandas as pd 
 import numpy as np
 import math
@@ -15,8 +15,6 @@ import pysam as ps
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.impute import KNNImputer
 from sklearn.metrics import pairwise_distances
-
-from copy import deepcopy
 
 import scipy.stats as stats
 
@@ -295,7 +293,7 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
     
     ###Filling the missing values using KNN
     number_reads,number_loci = pileup.shape
-    pileup_filled = deepcopy(pileup)
+    pileup_filled = pileup.copy()
 
     if number_reads>1 and number_loci>1 :
         imputer = KNNImputer(n_neighbors=5, copy=False, keep_empty_features=True)
@@ -303,7 +301,7 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
         pileup_filled[(pileup_filled>=0.5)] = 1
         pileup_filled[(pileup_filled<0.5)] = 0
     else:
-        pileup_filled = pileup  
+        pileup_filled = pileup.copy()  
 
     #now compute the pairwise number of 0-0, 0-1, 1-0, 1-1 between all the columns with matrix multiplication
     matrix_1_1 = np.dot(pileup_filled.T,pileup_filled)
@@ -319,31 +317,30 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
     matrix_0_1 += epsilon
     matrix_1_0 += epsilon
 
-    #now compute the chisquare statistics between all the columns
-    pvalues = np.zeros((number_loci,number_loci))
+    #now compute the chisquare statistics between all the columns (vectorized)
     best_pvalue = 0.0001
-    for i in range(number_loci):
-        pvalues[i,i] = best_pvalue
-        for j in range(i+1,number_loci):
-            if matrix_1_1[i,j] > matrix_0_1[i,j] and pairwise_distance_0[i,j] < 0.7: #if the two columns have not at least 70% similar 0s, dont link them
-                pvalues[i,j] = 1
-                pvalues[j,i] = 1
-            elif pairwise_distance_0[i,j] > 0.9 and pairwise_distance_1[i,j] > 0.9: #if they have highly similar 0s and highly similar 1s, then link them
-                pvalues[i,j] = best_pvalue
-                pvalues[j,i] = best_pvalue
-            else: #this is a bit between the two
-                # Ensure no zero values in the contingency table
-                epsilon_chi = 1e-10
-                contingency = [
-                    [max(matrix_1_1[i,j], epsilon_chi), max(matrix_1_0[i,j], epsilon_chi)],
-                    [max(matrix_0_1[i,j], epsilon_chi), max(matrix_0_0[i,j], epsilon_chi)]
-                ]
-                pvalue = max(min(1,stats.chi2_contingency(contingency)[1]), best_pvalue)
-
-                pvalues[i,j] = pvalue
-                pvalues[j,i] = pvalue
-                # print("3 rrrrr", matrix_0_0[i,j],matrix_0_1[i,j],matrix_1_0[i,j],matrix_1_1[i,j], pvalue)
-
+    epsilon_chi = 1e-10
+    _t_new_start = time.time()
+    # Evaluate the two shortcut conditions first so chi-square is only run on pairs not covered by them
+    mask1 = (matrix_1_1 > matrix_0_1 + matrix_1_0) & (pairwise_distance_0 < 0.7)   # Condition 1: don't link
+    mask2 = (pairwise_distance_0 > 0.9) & (pairwise_distance_1 > 0.9)  # Condition 2: link strongly
+    needs_chi2 = ~mask1 & ~mask2
+    np.fill_diagonal(needs_chi2, False)  # diagonal is always best_pvalue, skip it too
+    # Build pvalues using shortcuts where possible
+    pvalues = np.where(mask1, 1.0, np.where(mask2, best_pvalue, 1.0))  # defaults: 1.0 for unset
+    # Compute chi-square only for the pairs that need it
+    if np.any(needs_chi2):
+        a = np.maximum(matrix_1_1, epsilon_chi)
+        b = np.maximum(matrix_1_0, epsilon_chi)
+        c = np.maximum(matrix_0_1, epsilon_chi)
+        d = np.maximum(matrix_0_0, epsilon_chi)
+        N_chi = a + b + c + d
+        with np.errstate(divide='ignore', invalid='ignore'):
+            chi2_stat = N_chi * (a * d - b * c) ** 2 / ((a + b) * (c + d) * (a + c) * (b + d))
+        pvalues[needs_chi2] = np.clip(stats.chi2.sf(chi2_stat[needs_chi2], df=1), best_pvalue, 1.0)
+    np.fill_diagonal(pvalues, best_pvalue)
+    _t_new_elapsed = time.time() - _t_new_start
+    _n_chi2_pairs = np.sum(needs_chi2)
 
     #now we can perform the clustering using AgglomerativeClustering
     agglo_cl = AgglomerativeClustering(n_clusters=None, metric='precomputed', linkage = 'complete',distance_threshold=0.05)
@@ -437,29 +434,38 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
                 # print("position ", list_of_sus_pos[i], " and reads ", set([list_of_reads[i] for i in list(np.where(row_means <= 0.1)[0])]))
 
 
-    #as a last step, recover the SNPs which correlate well with validated SNPs, using the mean SNP vector of each cluster
+    #as a last step, recover the SNPs which correlate well with validated SNPs, using the mean SNP vector of each cluster (vectorized)
+    already_called = np.array([pos in snps_res for pos in list_of_sus_pos])
+    n_embl = max(1, len(emblematic_snps))
+    epsilon_rescue = 1e-7
 
+    snps_rescue_new = {}
     for idxs, mean_snp_vector in emblematic_snps:
-        for j in range(number_loci):
-            if list_of_sus_pos[j] not in snps_res:
-                # Compute correlation between mean_snp_vector and column j
-                col_j = pileup_filled[:, j]
-                # Only consider rows without NaN in mean_snp_vector or col_j
-                valid_mask = ~np.isnan(mean_snp_vector) & ~np.isnan(col_j)
-                if np.sum(valid_mask) == 0:
-                    continue
+        valid_mask = ~np.isnan(mean_snp_vector)
+        msv = mean_snp_vector[valid_mask]
+        pf = pileup_filled[valid_mask, :]  # shape: (nr_valid, nl)
 
-                epsilon = 0.0000001
-                pvalue = stats.chi2_contingency([[np.sum((mean_snp_vector[valid_mask] < 0.5) & (col_j[valid_mask] < 0.5)) + epsilon,
-                                                  np.sum((mean_snp_vector[valid_mask] < 0.5) & (col_j[valid_mask] >= 0.5))+ epsilon],
-                                                 [np.sum((mean_snp_vector[valid_mask] >= 0.5) & (col_j[valid_mask] < 0.5))+ epsilon,
-                                                  np.sum((mean_snp_vector[valid_mask] >= 0.5) & (col_j[valid_mask] >= 0.5))+ epsilon]])[1]
-                # # Debug print for specific position
-                # if list_of_sus_pos[j] == 12170:
-                #     print("I am looking at the correlation of the mean SNP vector with the SNP ", list_of_sus_pos[j], " and p-value ", pvalue)
-                # Rescue based on pvalue
-                if (pvalue < 0.001 / max(1, len(emblematic_snps)) or pvalue<0.000001)and np.sum(col_j[valid_mask] < 0.5) > 0:
-                    snps_res[list_of_sus_pos[j]] = set([list_of_reads[alt_row] for alt_row in range(len(pileup)) if pileup_filled[alt_row, j] == 0 and mean_snp_vector[alt_row] < 0.5])
+        a_r = np.sum((msv[:, None] < 0.5) & (pf < 0.5), axis=0).astype(float) + epsilon_rescue
+        b_r = np.sum((msv[:, None] < 0.5) & (pf >= 0.5), axis=0).astype(float) + epsilon_rescue
+        c_r = np.sum((msv[:, None] >= 0.5) & (pf < 0.5), axis=0).astype(float) + epsilon_rescue
+        d_r = np.sum((msv[:, None] >= 0.5) & (pf >= 0.5), axis=0).astype(float) + epsilon_rescue
+        N_r = a_r + b_r + c_r + d_r
+        with np.errstate(divide='ignore', invalid='ignore'):
+            chi2_r = N_r * (a_r * d_r - b_r * c_r) ** 2 / ((a_r + b_r) * (c_r + d_r) * (a_r + c_r) * (b_r + d_r))
+        pvals = stats.chi2.sf(chi2_r, df=1)
+
+        has_zeros = np.sum(pf < 0.5, axis=0) > 0
+        rescue_mask = ~already_called & has_zeros & ((pvals < 0.001 / n_embl) | (pvals < 0.000001))
+
+        for j in np.where(rescue_mask)[0]:
+            snps_rescue_new[list_of_sus_pos[j]] = set([
+                list_of_reads[alt_row] for alt_row in range(len(pileup))
+                if pileup_filled[alt_row, j] == 0 and mean_snp_vector[alt_row] < 0.5
+            ])
+            already_called[j] = True
+
+    for pos, reads in snps_rescue_new.items():
+        snps_res[pos] = reads
     #return the list of validated snps
     return snps_res
 
@@ -782,6 +788,8 @@ if __name__ == '__main__':
         error_rate = mismatched_bases / total_bases
     else:
         error_rate = 0.1  # Fallback to default if no reads are found
+    # error_rate = 0.023611397522090707
+    # print("DEBUG HERE")
     print(f"Computed error rate+divergence from the bam file: {error_rate}.")
 
     max_error_rate_on_column = max(0.1,min(error_rate*3, 0.5))
@@ -809,7 +817,7 @@ if __name__ == '__main__':
         os.remove(vcf_file)
     o = open(vcf_file,'w')
     o.write('##fileformat=VCFv4.2\n')
-    o.write('##source=snoopy\n')
+    o.write('##source=SNooPy\n')
     o.write('##reference='+originalAssembly+'\n')
     for contig in contigs:
         o.write(f"##contig=<ID={contig['SN']},length={contig['LN']}>\n")
@@ -849,7 +857,7 @@ if __name__ == '__main__':
             if read_count > 0:
                 average_read_length //= read_count
             else:
-                average_read_length = 200  # Default to 100 if no reads are found, we dont care anyway
+                average_read_length = 200  # Default to 200 if no reads are found, we dont care anyway
             window_here = min(10000,max(200, average_read_length // 2))  # Ensure a window size between 200 and 10000
         for start_pos in range(0,contig_length,window_here):
             if start_pos+window_here <= contig_length:
@@ -883,3 +891,4 @@ if __name__ == '__main__':
     #print the time now, and the total time taken
     print("["+time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())+"] Total time taken: ", time.time()-time_start)
     
+

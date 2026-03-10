@@ -23,7 +23,7 @@ def normalize_vcf(input_vcf, output_vcf):
                                 depth = fields[9].split(':')[3].split(',')[a+1]
                             else:
                                 depth='0'
-                        elif 'metacaller' in input_vcf:
+                        elif 'snoopy' in input_vcf:
                             depth = info.lstrip("DP=").split(',')[a]
                         else:
                             print("ERROR: which caller is that?")
