@@ -4,7 +4,7 @@ Authors: Roland Faure, based on a previous program (strainminer) by Minh Tam Tru
 """
 
 
-__version__ = '0.4.0'
+__version__ = '0.4.1'
 import pandas as pd 
 import numpy as np
 import math
@@ -439,6 +439,8 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
     n_embl = max(1, len(emblematic_snps))
     epsilon_rescue = 1e-7
 
+    # print("sus poslq ", list_of_sus_pos, ' dsj ml')
+
     snps_rescue_new = {}
     for idxs, mean_snp_vector in emblematic_snps:
         valid_mask = ~np.isnan(mean_snp_vector)
@@ -454,8 +456,18 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
             chi2_r = N_r * (a_r * d_r - b_r * c_r) ** 2 / ((a_r + b_r) * (c_r + d_r) * (a_r + c_r) * (b_r + d_r))
         pvals = stats.chi2.sf(chi2_r, df=1)
 
+        # #look for position 20335 and show how it correlates with other positions
+        # if 20335 in list_of_sus_pos:
+        #     idx_20335 = list_of_sus_pos.index(20335)
+        #     print(f"Correlation of position 20335 with other positions:")
+        #     for j in range(len(list_of_sus_pos)):
+        #         if j != idx_20335:
+        #             print(f"Position {list_of_sus_pos[j]}: p-value = {pvals[j]:.2e}, mean SNP vector correlation = {np.corrcoef(mean_snp_vector, pileup_filled[:, j])[0, 1]:.2f}")
+        #     sys.exit()
         has_zeros = np.sum(pf < 0.5, axis=0) > 0
-        rescue_mask = ~already_called & has_zeros & ((pvals < 0.001 / n_embl) | (pvals < 0.000001))
+        number_of_correlating_pos = np.sum(pvals < 0.01)
+        rescue_mask = ~already_called & has_zeros & (((pvals ** number_of_correlating_pos) < 1e-6))
+        # rescue_mask = ~already_called & has_zeros & ((pvals < 0.001 / n_embl) | (pvals < 0.000001))
 
         for j in np.where(rescue_mask)[0]:
             snps_rescue_new[list_of_sus_pos[j]] = set([
@@ -775,21 +787,21 @@ if __name__ == '__main__':
     if not os.path.exists(out):
         os.makedirs(out)
 
-    # Compute the error rate from the bam file
-    total_bases = 0
-    mismatched_bases = 0
-    bamfile_ps = ps.AlignmentFile(bamfile, 'rb')
-    for read in bamfile_ps.fetch():
-        if not read.is_unmapped and not read.is_secondary and not read.is_supplementary and read.has_tag('NM'):  # NM tag indicates the number of mismatches
-            mismatched_bases += read.get_tag('NM')
-            total_bases += read.query_length
-    bamfile_ps.close()
-    if total_bases > 0:
-        error_rate = mismatched_bases / total_bases
-    else:
-        error_rate = 0.1  # Fallback to default if no reads are found
-    # error_rate = 0.023611397522090707
-    # print("DEBUG HERE")
+    # # Compute the error rate from the bam file
+    # total_bases = 0
+    # mismatched_bases = 0
+    # bamfile_ps = ps.AlignmentFile(bamfile, 'rb')
+    # for read in bamfile_ps.fetch():
+    #     if not read.is_unmapped and not read.is_secondary and not read.is_supplementary and read.has_tag('NM'):  # NM tag indicates the number of mismatches
+    #         mismatched_bases += read.get_tag('NM')
+    #         total_bases += read.query_length
+    # bamfile_ps.close()
+    # if total_bases > 0:
+    #     error_rate = mismatched_bases / total_bases
+    # else:
+    #     error_rate = 0.1  # Fallback to default if no reads are found
+    error_rate = 0.023611397522090707
+    print("DEBUG HERE")
     print(f"Computed error rate+divergence from the bam file: {error_rate}.")
 
     max_error_rate_on_column = max(0.1,min(error_rate*3, 0.5))
@@ -868,9 +880,10 @@ if __name__ == '__main__':
     bamfile_ps.close()
 
     # Filter windows for contig_9843 encompassing position 35042
-    # windows_description = [window for window in windows_description if window[0] == 'edge_349' and window[1] <= 12173 < window[2]]
     # print(windows_description)
-    # print("DEBUUUUUUG")
+    windows_description = [window for window in windows_description if window[0] == 'contig_100551' and window[1] <= 20348 < window[2]]
+    print(windows_description)
+    print("DEBUUUUUUG")
 
     with ProcessPoolExecutor(max_workers=num_threads) as executor:
         futures = [executor.submit(call_variants_on_this_window, window[0], window[1], window[2], filtered_col_threshold, no_snp_threshold, bamfile, originalAssembly, window[3], max_error_rate_on_column, benchmark) for window in windows_description]
