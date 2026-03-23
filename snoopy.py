@@ -4,7 +4,7 @@ Authors: Roland Faure, based on a previous program (strainminer) by Minh Tam Tru
 """
 
 
-__version__ = '0.4.2'
+__version__ = '0.4.3'
 import pandas as pd 
 import numpy as np
 import math
@@ -208,8 +208,6 @@ def get_data(bamfile, originalAssembly, contig_name,start_pos,stop_pos, no_snp_t
             unique = unique[idx_sort]
             counts = counts[idx_sort]
         
-            # print("couoqn", counts)
-
             #if there is a base different from the reference, add the position to the list of suspicious positions or to obvious snps if it's really too obvious
             alternative_bases = set()
             for alt_b in range(len(unique)-1,-1,-1):
@@ -262,6 +260,7 @@ def get_data(bamfile, originalAssembly, contig_name,start_pos,stop_pos, no_snp_t
     #     for pos in range(72660, 74670):
     #         if pos in matrix:
     #             print(f"Position {pos}: {''.join('*' if v is np.nan else str(int(v)) for k, v in sorted(matrix[pos].items()))}")
+    # print("matrix number of row: ", len(matrices_list[0][list(matrices_list[0].keys())[0]]), " number of columns: ", len(matrices_list[0].keys()))
 
     return matrices_list, list_of_suspicious_positions_list, obvious_snps, read_error_rates
 
@@ -293,21 +292,26 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
     
     ###Filling the missing values using KNN
     number_reads,number_loci = pileup.shape
-    pileup_filled = pileup.copy()
+    #create a pileup_filled with NaN replaced by 0
+    pileup_filled_0 = pileup.copy()
+    pileup_filled_0 = np.where(np.isnan(pileup_filled_0), 0, pileup_filled_0)
+    #now create a pileup_filled with NaN replaced by 1
+    pileup_filled_1 = pileup.copy()
+    pileup_filled_1 = np.where(np.isnan(pileup_filled_1), 1, pileup_filled_1)
 
-    if number_reads>1 and number_loci>1 :
-        imputer = KNNImputer(n_neighbors=5, copy=False, keep_empty_features=True)
-        pileup_filled = imputer.fit_transform(pileup_filled)
-        pileup_filled[(pileup_filled>=0.5)] = 1
-        pileup_filled[(pileup_filled<0.5)] = 0
-    else:
-        pileup_filled = pileup.copy()  
+    # if number_reads>1 and number_loci>1 :
+    #     imputer = KNNImputer(n_neighbors=5, copy=False, keep_empty_features=True)
+    #     pileup_filled = imputer.fit_transform(pileup_filled)
+    #     pileup_filled[(pileup_filled>=0.5)] = 1
+    #     pileup_filled[(pileup_filled<0.5)] = 0
+    # else:
+    #     pileup_filled = pileup.copy()  
 
     #now compute the pairwise number of 0-0, 0-1, 1-0, 1-1 between all the columns with matrix multiplication
-    matrix_1_1 = np.dot(pileup_filled.T,pileup_filled)
-    matrix_1_0 = np.dot(pileup_filled.T,1-pileup_filled)
-    matrix_0_1 = np.dot(1-pileup_filled.T,pileup_filled)
-    matrix_0_0 = np.dot(1-pileup_filled.T,1-pileup_filled)
+    matrix_1_1 = np.dot(pileup_filled_0.T,pileup_filled_0)
+    matrix_1_0 = np.dot(pileup_filled_0.T,1-pileup_filled_1)
+    matrix_0_1 = np.dot(1-pileup_filled_1.T,pileup_filled_0)
+    matrix_0_0 = np.dot(1-pileup_filled_1.T,1-pileup_filled_1)
 
     epsilon = 1e-10  #to avoid dividing 0 by 0
     matrix_0_0 += epsilon
@@ -355,41 +359,62 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
     #extract each label of size at least two and find the biggest rectangle of 0s in the submatrix
     snps_res = {} #maps position -> list_of_reads_with_alt_alleles
     # print([(int(labels[i]), list_of_sus_pos[i]) for i in range(len(labels))], "ooiuo")
+    # Debug: print distance between specific columns if they exist
+    idx_75961 = next((i for i, pos in enumerate(list_of_sus_pos) if pos == 75961), None)
+    idx_75820 = next((i for i, pos in enumerate(list_of_sus_pos) if pos == 75820), None)
     for label in np.unique(labels):
         idx = np.where(labels == label)[0] #idx is the list of positions where the group label is label
+
         if len(idx) >= 1:
 
-            submatrix = pileup_filled[:,idx]
+            submatrix = pileup[:,idx]
 
             # Ensure all columns in the group are almost identical (and not correlating like 1001 correlates with 0110)
             toggled_columns = [False for i in range(len(idx))]
             for j in range(1, len(idx)):
                 col_i = submatrix[:, 0]
                 col_j = submatrix[:, j]
-                if np.sum(col_i != col_j) > 0.5 * number_reads:  # If more than 50% of rows differ
+                # Count differences only on rows where both values are defined (ignore NaN values)
+                valid_rows = (~np.isnan(col_i)) & (~np.isnan(col_j))
+                valid_count = np.sum(valid_rows)
+                if valid_count == 0:
+                    continue
+                diff_count = np.sum(col_i[valid_rows] != col_j[valid_rows])
+                if diff_count > 0.5 * valid_count:  # If more than 50% of comparable rows differ
                     # Flip all bits in one of the columns to make them identical
                     submatrix[:, j] = 1 - submatrix[:, j]
                     toggled_columns[j] = True
 
-            #compute the average value of each row and store it in a vector
-            row_means = submatrix.mean(axis = 1)
-            #find the number of rows of 0s
-            nb_rows_0s = len(np.where(row_means <= 0.1)[0])
-            nb_rows_with_some_0s = len(np.where(row_means <= 0.9)[0])
+            # compute row means while handling all-NaN rows explicitly (avoid RuntimeWarning on empty slices)
+            valid_counts_per_row = np.sum(~np.isnan(submatrix), axis=1)
+            informative_rows = valid_counts_per_row > 0
+            number_informative_reads = int(np.sum(informative_rows))
+            if number_informative_reads == 0:
+                continue
+            row_sums = np.nansum(submatrix, axis=1)
+            row_means = np.divide(
+                row_sums,
+                valid_counts_per_row,
+                out=np.full(number_reads, np.nan, dtype=float),
+                where=informative_rows,
+            )
+            # find the number of informative rows of 0s
+            nb_rows_0s = int(np.sum(informative_rows & (row_means <= 0.1)))
+            nb_rows_with_some_0s = int(np.sum(informative_rows & (row_means <= 0.9)))
 
-            if nb_rows_with_some_0s <= max_error_on_a_column*number_reads and len(idx) == 1: #then the test will always fail anyway
+            if nb_rows_with_some_0s <= max_error_on_a_column*number_informative_reads and len(idx) == 1: #then the test will always fail anyway
                 continue
             if nb_rows_0s<=1:
                 continue 
 
             # Extract error rates of reads having 0s
             error_rates_of_reads_with_zeros = []
-            for row in range(number_reads):
-                if row_means[row] <= 0.1:  # Same condition as used for nb_rows_0s
+            for row in np.where(informative_rows & (row_means <= 0.1))[0]:
+                # Same condition as used for nb_rows_0s
                     error_rates_of_reads_with_zeros.append(error_rates_of_reads[row])
 
             max_error_rate_of_reads = np.max(error_rates_of_reads_with_zeros)
-            error_rate = max(min(max_error_on_a_column, nb_rows_with_some_0s/number_reads),0.05, max_error_rate_of_reads)
+            error_rate = max(min(max_error_on_a_column, nb_rows_with_some_0s/number_informative_reads),0.05, max_error_rate_of_reads)
 
             # Do not count stretches of SNPs as distinct snps (can create false positives in deletions)
             number_of_separated_columns = 0
@@ -406,11 +431,17 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
                 corrected_number_of_loci = max(corrected_number_of_loci, int( max_error_rate_of_reads * length_of_stretch ))
 
             #now perform the statistical test if the obtained rectangle of 0s is significant
-            p_value_of_the_column_cluster = statistical_test(nb_rows_0s, number_reads , number_of_separated_columns, corrected_number_of_loci, error_rate)
+            p_value_of_the_column_cluster = statistical_test(nb_rows_0s, number_informative_reads , number_of_separated_columns, corrected_number_of_loci, error_rate)
+
+            # if 75961 in [list_of_sus_pos[idx[i]] for i in range(len(idx))] or 75820 in [list_of_sus_pos[idx[i]] for i in range(len(idx))]:
+            #     # print("Read names in rectangle:", [list_of_reads[j] for j in range(number_reads)])
+            #     print("I found a rectangle of ", nb_rows_0s, " rows of 0s in a cluster of ", len(idx), " columns, among in total ", corrected_number_of_loci, " columns and ", number_informative_reads, " informative rows with an error rate of ", error_rate, ", which gives a p-value of ", p_value_of_the_column_cluster, " (label ", label, ")")
+            #     print("columns in this rectangle correspond to positions ", [list_of_sus_pos[idx[i]] for i in range(len(idx))])
+
 
             #validate the snps if the p-value is significant
             if p_value_of_the_column_cluster < 0.001:
-                mean_snp_vector = np.mean(submatrix, axis=1)  # already computed above
+                mean_snp_vector = row_means.copy()  # already computed above (NaN for non-informative rows)
                 emblematic_snps.append((idx, mean_snp_vector))
 
                 for idx_in_idx in range(len(idx)):
@@ -422,16 +453,17 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
                         snps_res[list_of_sus_pos[pos]] = set([list_of_reads[i] for i in list(np.where(row_means <= 0.1)[0])])
 
                 # # Example: If position 1612 is in the current rectangle, print a message
-                # if 12169 in [list_of_sus_pos[idx[i]] for i in range(len(idx))]:
-                #     print("Read names in rectangle:", [list_of_reads[j] for j in range(number_reads)])
+                # if 75961 in [list_of_sus_pos[idx[i]] for i in range(len(idx))] or 75820 in [list_of_sus_pos[idx[i]] for i in range(len(idx))]:
+                #     # print("Read names in rectangle:", [list_of_reads[j] for j in range(number_reads)])
                 #     print("I found a rectangle of ", nb_rows_0s, " rows of 0s in a cluster of ", len(idx), " columns, among in total ", corrected_number_of_loci, " columns and ", number_reads, " rows with an error rate of ", error_rate, ", which gives a p-value of ", p_value_of_the_column_cluster, " (label ", label, ")")
-                #     for i in range(len(idx)):
-                #         for j in range(number_reads):
-                #             print(int(submatrix[j,i]), end = '')
-                #         print(' : ', list_of_sus_pos[idx[i]])
-                #     print('')
+                #     print("columns in this rectangle correspond to positions ", [list_of_sus_pos[idx[i]] for i in range(len(idx))])
+                #     # for i in range(len(idx)):
+                #     #     for j in range(number_reads):
+                #     #         print(submatrix[j,i], end = '')
+                #     #     print(' : ', list_of_sus_pos[idx[i]])
+                #     # print('')
 
-                # print("position ", list_of_sus_pos[i], " and reads ", set([list_of_reads[i] for i in list(np.where(row_means <= 0.1)[0])]))
+                # print("position ", list_of_sus_pos[i])#, " and reads ", set([list_of_reads[i] for i in list(np.where(row_means <= 0.1)[0])]))
 
 
     #as a last step, recover the SNPs which correlate well with validated SNPs, using the mean SNP vector of each cluster (vectorized)
@@ -446,23 +478,26 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
     for idxs, mean_snp_vector in emblematic_snps:
         valid_mask = ~np.isnan(mean_snp_vector)
         msv = mean_snp_vector[valid_mask]
-        pf = pileup_filled[valid_mask, :]  # shape: (nr_valid, nl)
+        pf = pileup[valid_mask, :]  # shape: (nr_valid, nl)
+        pf_valid = ~np.isnan(pf)
 
-        a_r = np.sum((msv[:, None] < 0.5) & (pf < 0.5), axis=0).astype(float) + epsilon_rescue
-        b_r = np.sum((msv[:, None] < 0.5) & (pf >= 0.5), axis=0).astype(float) + epsilon_rescue
-        c_r = np.sum((msv[:, None] >= 0.5) & (pf < 0.5), axis=0).astype(float) + epsilon_rescue
-        d_r = np.sum((msv[:, None] >= 0.5) & (pf >= 0.5), axis=0).astype(float) + epsilon_rescue
+        a_r = np.sum(pf_valid & (msv[:, None] < 0.5) & (pf < 0.5), axis=0).astype(float) + epsilon_rescue
+        b_r = np.sum(pf_valid & (msv[:, None] < 0.5) & (pf >= 0.5), axis=0).astype(float) + epsilon_rescue
+        c_r = np.sum(pf_valid & (msv[:, None] >= 0.5) & (pf < 0.5), axis=0).astype(float) + epsilon_rescue
+        d_r = np.sum(pf_valid & (msv[:, None] >= 0.5) & (pf >= 0.5), axis=0).astype(float) + epsilon_rescue
         
         N_r = a_r + b_r + c_r + d_r
         with np.errstate(divide='ignore', invalid='ignore'):
             chi2_r = N_r * (a_r * d_r - b_r * c_r) ** 2 / ((a_r + b_r) * (c_r + d_r) * (a_r + c_r) * (b_r + d_r))
         pvals = stats.chi2.sf(chi2_r, df=1)
+        
 
         #for all values of pvals lower than 0.01, multiply the rescue value of the sus pos by the pval with the emblematic snp
         for j in range(len(pvals)):
-            # if list_of_sus_pos[j] == 15471:
+            # if list_of_sus_pos[j] == 77024:
             #     print(f"Position {list_of_sus_pos[j]}: p-value = {pvals[j]:.2e}, a={a_r[j]}, b={b_r[j]}, c={c_r[j]}, d={d_r[j]}")
-            if pvals[j] < 0.01:
+            #     print("correlates with emblematic SNP at positions ", [list_of_sus_pos[i] for i in idxs])
+            if pvals[j] < 0.01 and a_r[j] + b_r[j] > 5 and c_r[j] + d_r[j] > 5: #only consider it if there are at least 5 reads supporting the correlation in each group, to avoid false positives  
                 rescue_values[j] *= pvals[j]
     
     #rescue all snps which rescue value are below 1e-6 * 0.01^(nb_emblematic_snps*0.01) (we expect nb_emblematic_snps*0.01 false positives amongst all positions, so we need to be more stringent if there are many emblematic snps)
@@ -471,9 +506,10 @@ def find_SNPs_in_this_window(pileup, list_of_sus_pos, list_of_reads, max_error_o
         if not already_called[j] and rescue_values[j] < rescue_threshold:
             snps_rescue_new[list_of_sus_pos[j]] = set([
                 list_of_reads[alt_row] for alt_row in range(len(pileup))
-                if pileup_filled[alt_row, j] == 0 and mean_snp_vector[alt_row] < 0.5
+                if pileup[alt_row, j] == 0 and mean_snp_vector[alt_row] < 0.5
             ])
             already_called[j] = True
+            # print(f"Rescued position {list_of_sus_pos[j]} with rescue value {rescue_values[j]:.2e} (threshold: {rescue_threshold:.2e})")
 
     for pos, reads in snps_rescue_new.items():
         snps_res[pos] = reads
@@ -677,7 +713,7 @@ def call_variants_on_this_window(contig_name, start_pos, end_pos, filtered_col_t
         list_of_matrices, list_of_list_of_suspicious_positions, obvious_snps, error_rates\
                 = get_data(bamfile, ref, contig_name,start_pos,end_pos, no_snp_threshold, max_error_on_column, all_variants) #for each window you can have different groups of reads e.g. if some of them align with very big gaps; Here, the lists represent the different groups of reads
         time_get_data2 += time.time() - time_get_data
-        # # Print obvious SNPs for debugging
+        # Print obvious SNPs for debugging
         # print("Obvious SNPs:")
         # for pos, reads in obvious_snps.items():
         #     print(f"Position: {pos}, Reads: {reads}")
@@ -695,7 +731,7 @@ def call_variants_on_this_window(contig_name, start_pos, end_pos, filtered_col_t
             # if 36 in dict_of_sus_pos:
             #     print(f"Pileup at position 68803: {''.join('*' if (v!=0 and v!=1) else str(int(v)) for v in dict_of_sus_pos[36].values())}")
             # df = df.dropna(axis=0, thresh=filtered_col_threshold * len(df.columns))  # Filter out rows (reads) with too many NaN values
-            df = df.fillna(1) #na values are not defined, they should not help call variants
+            # df = df.fillna(1) #na values are not defined, they should not help call variants
 
             ###clustering
             if len(dict_of_sus_pos) > 0 :
@@ -799,7 +835,7 @@ if __name__ == '__main__':
         error_rate = mismatched_bases / total_bases
     else:
         error_rate = 0.1  # Fallback to default if no reads are found
-    # error_rate = 0.023611397522090707
+    # error_rate = 0.026
     # print("DEBUG HERE")
     print(f"Computed error rate+divergence from the bam file: {error_rate}.")
 
@@ -878,8 +914,8 @@ if __name__ == '__main__':
 
     bamfile_ps.close()
 
-    # Filter windows for contig_9843 encompassing position 35042
-    # windows_description = [window for window in windows_description if window[0] == 'contig_10' and window[1] <= 15472 < window[2]]
+    # # Filter windows for contig_9843 encompassing position 35042
+    # windows_description = [window for window in windows_description if window[0] == 'contig_105' and window[1] <= 76800 < window[2]]
     # print(windows_description)
     # print("DEBUUUUUUG")
 
