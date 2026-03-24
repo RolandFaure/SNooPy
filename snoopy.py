@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 SNooPy: Strain-level Nucleotide Polymorphism detection in metagenomic data
 Authors: Roland Faure, based on a previous program (strainminer) by Minh Tam Truong Khac
