@@ -416,6 +416,9 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, lengths_of_contigs, false
     set_of_contig={} #to select all contigs
     tmp_dir = "tmp"
 
+    #set of contig is all the contigs that start with contig_2
+    set_of_contig = set([c for c in lengths_of_contigs.keys() if c.startswith("contig_2")])
+
 
     # # Index all positions (contig_name, position) from the input VCF
     # variants = {}
@@ -534,11 +537,15 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, lengths_of_contigs, false
     #         fields = line.strip().split("\t")
     #         if len(fields) >= 5:
     #             contig, pos = fields[0], int(fields[1]) - 1  # Convert 1-based to 0-based
+    #             if len(set_of_contig) > 0 and contig not in set_of_contig:
+    #                 continue
     #             bases = fields[4]
     #             counts = {base: bases.upper().count(base) for base in "ATCG*+"}
     #             base_counts[(contig, pos)] = counts
     #         else:
     #             contig, pos = fields[0], int(fields[1]) - 1
+    #             if len(set_of_contig) > 0 and contig not in set_of_contig:
+    #                 continue
     #             base_counts[(contig, pos)] = {"A": 0, "T": 0, "C": 0, "G": 0, "*": 0, "+":0}
     # print("Base counting completed.")
 
@@ -826,7 +833,7 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, lengths_of_contigs, false
 
         # Second plot: normalized histograms of depth for unique variants
         plt.figure(figsize=(10, 6))
-        bins = np.linspace(0, 20, 101)
+        bins = np.linspace(0.5, 20.5, 21)
 
         # Histogram: DeepVariant not MetaCaller (blue, mirrored below x-axis)
         deep_hist, deep_bins = np.histogram(hist_deepvariant_not_metacaller, bins=bins)
@@ -836,15 +843,16 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, lengths_of_contigs, false
             -deep_hist,
             width=(deep_bins[1] - deep_bins[0]),
             color="blue",
-            label="DeepVariant not MetaCaller"
+            label="Number of variants called by DeepVariant and not SNooPy"
         )
+
 
         # Histogram: MetaCaller not DeepVariant (orange)
         plt.hist(
             hist_metacaller_not_deepvariant,
             bins=bins,
             color="orange",
-            label="MetaCaller not DeepVariant"
+            label="Number of variants called by SNooPy and not DeepVariant"
         )
 
         plt.xlabel("Coverage of the variants")
@@ -852,6 +860,8 @@ def compare_calls_with_HiFi(all_variants, mapped_hifi, lengths_of_contigs, false
         plt.title("Distribution of SNPs called only by metacaller or only deepvariant by coverage")
         plt.legend()
         plt.axhline(0, color="black", linewidth=1)
+        plt.xlim(0.5, 20.5)
+        plt.xticks(np.arange(0, 22, 2))
         plt.tight_layout()
         plt.show()
 

@@ -657,12 +657,12 @@ def output_VCF_of_this_window(bamfile, originalAssembly, variants, contig_name, 
                         first_allele = False
                     out.write(allele)
                     counts.append(alleles[allele])
-            out.write('\t.\tDP=')
+            out.write('\t.\t.\tDP=')
             for i in range(len(counts)):
                 if i > 0:
                     out.write(',')
                 out.write(str(counts[i]))
-            out.write('\t.\n')
+            out.write('\n')
 
             index_of_variant_group += 1
         
@@ -870,7 +870,7 @@ if __name__ == '__main__':
         o.write(f"##contig=<ID={contig['SN']},length={contig['LN']}>\n")
     o.write('##INFO=<ID=DP,Number=.,Type=Integer,Description="Allelic depths for the variant in the order listed">\n')
 
-    o.write('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tINFO\tFILTER\n')
+    o.write('#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n')
     o.close()
 
     ref = ps.FastaFile(originalAssembly)
