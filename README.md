@@ -1,5 +1,5 @@
 # SNooPy
-metagenomic SNP caller for long-read sequencing data. Preprint: (https://www.biorxiv.org/content/biorxiv/early/2025/12/02/2025.12.01.691549.full.pdf)[https://www.biorxiv.org/content/biorxiv/early/2025/12/02/2025.12.01.691549.full.pdf]. SNooPy relies on a statistical model tailored for metagenomics. At the moment where we ran our tests, it greatly outperformed other callers such as DeepVariant, Longshot and Bcftools on metagenomic datasets.
+metagenomic SNP caller for long-read sequencing data. Preprint: [https://www.biorxiv.org/content/biorxiv/early/2025/12/02/2025.12.01.691549.full.pdf](https://www.biorxiv.org/content/biorxiv/early/2025/12/02/2025.12.01.691549.full.pdf). SNooPy relies on a statistical model tailored for metagenomics. At the moment where we ran our tests, it greatly outperformed other callers such as DeepVariant, Longshot and Bcftools on metagenomic datasets.
 
 ## Installation
 SNooPy is a python file, which does not need compilation. You will need to have an environment with python3, scipy, numpy, pandas, pysam and sklearn installed. You can create such an environment in conda:
