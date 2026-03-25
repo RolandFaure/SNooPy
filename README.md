@@ -29,6 +29,11 @@ optional arguments:
   --benchmark           Use if benchmarking to compare against other variant
                         callers [False]
 ```
+### Input
+SNooPy expects as input a reference genome (FASTA format) and a set of reads aligned to this reference in [BAM format](https://samtools.github.io/hts-specs/SAMv1.pdf), as provided e.g. by [minimap2](https://github.com/lh3/minimap2). You can obtain the BAM file by running, for example:
+```
+minimap2 -ax map-ont reference.fa reads.fq | samtools view -Sb | samtools sort -o alignment.bam
+```
 
 ## Citation
 Please cite SNooPy using the preprint:
