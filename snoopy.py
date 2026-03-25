@@ -805,9 +805,7 @@ def parse_arguments():
 
     return arg.bam, arg.out, arg.window, arg.reference, arg.threads, arg.benchmark
 
-
-if __name__ == '__main__':
-
+def main():
     print('SNooPy version ', __version__)
     print(" ".join(sys.argv))
     time_start = time.time()
@@ -815,8 +813,6 @@ if __name__ == '__main__':
     window = 0
     no_snp_threshold = 0.95
     filtered_col_threshold = 0.9
-    min_row_quality = 5
-    min_col_quality = 3
 
     bamfile, out, window, originalAssembly, num_threads, benchmark = parse_arguments()
     #mkdir out
@@ -938,5 +934,10 @@ if __name__ == '__main__':
 
     #print the time now, and the total time taken
     print("["+time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())+"] Total time taken: ", time.time()-time_start)
+
+
+if __name__ == '__main__':
+
+    main()
     
 
